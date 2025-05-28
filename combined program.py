@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import os
 
 st.title("Cognitive Task Data Analyzer")
 
@@ -11,11 +12,18 @@ task_choice = st.selectbox("Choose a program:", [
 
 if task_choice == "Visual Search Task Data Analysis":
     st.header("Visual Search Task")
-    uploaded_file = st.file_uploader("Upload your CSV file", type=["csv"])
+    uploaded_file = st.file_uploader("Upload your data file", type=["csv", "xlsx"])
 
     if uploaded_file:
         try:
-            df = pd.read_csv(uploaded_file, skiprows=3)
+            ext = os.path.splitext(uploaded_file.name)[1]
+            if ext == ".csv":
+                df = pd.read_csv(uploaded_file, skiprows=3)
+            elif ext == ".xlsx":
+                df = pd.read_excel(uploaded_file, skiprows=3)
+            else:
+                raise ValueError("Unsupported file type")
+
             df = df.iloc[:, [18, 19]]
             df.columns = ['ResponseTime', 'Correct']
             df_correct = df[df['Correct'] == 1]
@@ -49,19 +57,25 @@ if task_choice == "Visual Search Task Data Analysis":
 
 elif task_choice == "Stroop Task Data Analysis":
     st.header("Stroop Task Analyzer")
-    uploaded_file1 = st.file_uploader("Upload First CSV File", type=["csv"], key="stroop1")
-    uploaded_file2 = st.file_uploader("Upload Second CSV File", type=["csv"], key="stroop2")
+    uploaded_file1 = st.file_uploader("Upload First Data File", type=["csv", "xlsx"], key="stroop1")
+    uploaded_file2 = st.file_uploader("Upload Second Data File", type=["csv", "xlsx"], key="stroop2")
 
     if uploaded_file1 and uploaded_file2:
         try:
-            def clean_csv(file):
-                df = pd.read_csv(file, skiprows=4, engine="python")
+            def clean_file(file):
+                ext = os.path.splitext(file.name)[1]
+                if ext == ".csv":
+                    df = pd.read_csv(file, skiprows=4, engine="python")
+                elif ext == ".xlsx":
+                    df = pd.read_excel(file, skiprows=4, engine="openpyxl")
+                else:
+                    raise ValueError("Unsupported file type")
                 df = df.iloc[:, [18, 19, 20]]
                 df.columns = ['S', 'T', 'U']
                 return df
 
-            df1 = clean_csv(uploaded_file1)
-            df2 = clean_csv(uploaded_file2)
+            df1 = clean_file(uploaded_file1)
+            df2 = clean_file(uploaded_file2)
             combined_df = pd.concat([df1, df2], ignore_index=True)
 
             combined_df['S'] = combined_df['S'].astype(str)
