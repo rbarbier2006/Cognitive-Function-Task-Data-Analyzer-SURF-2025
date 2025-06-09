@@ -79,10 +79,10 @@ elif task_choice == "Stroop Task Data Analysis":
             combined_df = pd.concat([df1, df2], ignore_index=True)
 
             combined_df['S'] = combined_df['S'].astype(str)
-            combined_df['U'] = combined_df['U'].astype(str)
+            combined_df['U'] = pd.to_numeric(combined_df['U'], errors='coerce')
             combined_df['T'] = pd.to_numeric(combined_df['T'], errors='coerce')
 
-            correct_df = combined_df[combined_df['S'] == combined_df['U']]
+            correct_df = combined_df[combined_df['U'] == 1]
             num_correct = len(correct_df)
             total_responses = len(combined_df)
             percent_accuracy = num_correct / total_responses if total_responses else 0
