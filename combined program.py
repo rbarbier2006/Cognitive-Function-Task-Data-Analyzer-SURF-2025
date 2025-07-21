@@ -31,7 +31,7 @@ if task_choice == "Visual Search Task Data Analysis":
             mean_rt = df_correct['ResponseTime'].mean()
             std_rt = df_correct['ResponseTime'].std()
             num_correct = len(df_correct)
-            percent_accuracy = num_correct / 80
+            percent_accuracy = (num_correct / 80) * 100
 
             result_df = pd.DataFrame({
                 'Mean RT': [mean_rt],
@@ -70,32 +70,48 @@ elif task_choice == "Stroop Task Data Analysis":
                     df = pd.read_excel(file, skiprows=4, engine="openpyxl")
                 else:
                     raise ValueError("Unsupported file type")
-                df = df.iloc[:, [18, 19, 20]]
-                df.columns = ['S', 'T', 'U']
+                df = df.iloc[:, [2, 18, 19, 20]]
+                df.columns = ['Condition', 'S', 'T', 'U']
                 return df
 
             df1 = clean_file(uploaded_file1)
             df2 = clean_file(uploaded_file2)
             combined_df = pd.concat([df1, df2], ignore_index=True)
 
+            # Remove rows where S is 'timeout'
+            combined_df = combined_df[combined_df['S'].astype(str).str.lower() != "timeout"]
+
+            # Convert necessary columns
+            combined_df['Condition'] = combined_df['Condition'].astype(str)
             combined_df['S'] = combined_df['S'].astype(str)
-            combined_df['U'] = pd.to_numeric(combined_df['U'], errors='coerce')
             combined_df['T'] = pd.to_numeric(combined_df['T'], errors='coerce')
+            combined_df['U'] = pd.to_numeric(combined_df['U'], errors='coerce')
 
-            correct_df = combined_df[combined_df['U'] == 1]
-            num_correct = len(correct_df)
-            total_responses = len(combined_df)
-            percent_accuracy = num_correct / total_responses if total_responses else 0
+            # Categorize into Compatible / Incompatible
+            compatible_df = combined_df[combined_df['Condition'].str.lower() == 'congruent'].copy()
+            compatible_df['Group'] = 'Compatible'
 
-            mean_rt = correct_df['T'].mean()
-            sd_rt = correct_df['T'].std()
+            incompatible_df = combined_df[combined_df['Condition'].str.lower() != 'congruent'].copy()
+            incompatible_df['Group'] = 'Incompatible'
 
-            result_df = pd.DataFrame([{
-                "Mean RT": round(mean_rt, 2),
-                "SD RT": round(sd_rt, 2),
-                "Accurate Responses": num_correct,
-                "Percent Accuracy": round(percent_accuracy, 4)
-            }])
+            results = []
+            for group_name, group_df in [('Compatible', compatible_df), ('Incompatible', incompatible_df)]:
+                group_total = len(group_df)
+                group_correct = group_df[group_df['U'] == 1]
+                num_correct = len(group_correct)
+                percent_accuracy = (num_correct / group_total) * 100 if group_total else 0
+                mean_rt = group_correct['T'].mean()
+                sd_rt = group_correct['T'].std()
+
+                results.append({
+                    'Condition': group_name,
+                    'Mean RT': round(mean_rt, 2),
+                    'SD RT': round(sd_rt, 2),
+                    'Accurate Responses': num_correct,
+                    'Percent Accuracy': round(percent_accuracy, 2)
+                })
+
+            result_df = pd.DataFrame(results)
 
             st.success("✅ Analysis complete!")
             st.dataframe(result_df)
