@@ -65,9 +65,9 @@ elif task_choice == "Stroop Task Data Analysis":
             def clean_file(file):
                 ext = os.path.splitext(file.name)[1]
                 if ext == ".csv":
-                    df = pd.read_csv(file, skiprows=4, engine="python")
+                    df = pd.read_csv(file, skiprows=3, engine="python")
                 elif ext == ".xlsx":
-                    df = pd.read_excel(file, skiprows=4, engine="openpyxl")
+                    df = pd.read_excel(file, skiprows=3, engine="openpyxl")
                 else:
                     raise ValueError("Unsupported file type")
                 df = df.iloc[:, [2, 18, 19, 20]]
