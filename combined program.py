@@ -97,11 +97,11 @@ elif task_choice == "Stroop Task Data Analysis":
             results = []
             for group_name, group_df in [('Compatible', compatible_df), ('Incompatible', incompatible_df)]:
                 group_total = len(group_df)
-                group_correct = group_df[group_df['U'] == 1]
-                num_correct = len(group_correct)
+                group_correct_df = group_df[group_df['U'] == 1]
+                num_correct = len(group_correct_df)
                 percent_accuracy = (num_correct / group_total) * 100 if group_total else 0
-                mean_rt = group_correct['T'].mean()
-                sd_rt = group_correct['T'].std()
+                mean_rt = group_correct_df['T'].mean()
+                sd_rt = group_correct_df['T'].std()
 
                 results.append({
                     'Condition': group_name,
