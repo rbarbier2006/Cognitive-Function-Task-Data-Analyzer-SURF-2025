@@ -78,24 +78,28 @@ elif task_choice == "Stroop Task Data Analysis":
             df2 = clean_file(uploaded_file2)
             combined_df = pd.concat([df1, df2], ignore_index=True)
 
-            # Remove rows where S is 'timeout'
             combined_df = combined_df[combined_df['S'].astype(str).str.lower() != "timeout"]
 
-            # Convert necessary columns
             combined_df['Condition'] = combined_df['Condition'].astype(str)
             combined_df['S'] = combined_df['S'].astype(str)
             combined_df['T'] = pd.to_numeric(combined_df['T'], errors='coerce')
             combined_df['U'] = pd.to_numeric(combined_df['U'], errors='coerce')
 
-            # Categorize into Compatible / Incompatible
-            compatible_df = combined_df[combined_df['Condition'].str.lower() == 'congruent'].copy()
-            compatible_df['Group'] = 'Compatible'
+            # Split into three groups
+            congruent_df = combined_df[combined_df['Condition'].str.lower() == 'congruent'].copy()
+            incongruent_df = combined_df[combined_df['Condition'].str.lower() == 'incongruent'].copy()
+            doubly_incongruent_df = combined_df[combined_df['Condition'].str.lower() == 'doubly incongruent'].copy()
 
-            incompatible_df = combined_df[combined_df['Condition'].str.lower() != 'congruent'].copy()
-            incompatible_df['Group'] = 'Incompatible'
+            congruent_df['Group'] = 'Congruent'
+            incongruent_df['Group'] = 'Incongruent'
+            doubly_incongruent_df['Group'] = 'Doubly Incongruent'
 
             results = []
-            for group_name, group_df in [('Compatible', compatible_df), ('Incompatible', incompatible_df)]:
+            for group_name, group_df in [
+                ('Congruent', congruent_df),
+                ('Incongruent', incongruent_df),
+                ('Doubly Incongruent', doubly_incongruent_df)
+            ]:
                 group_total = len(group_df)
                 group_correct_df = group_df[group_df['U'] == 1]
                 num_correct = len(group_correct_df)
@@ -129,3 +133,4 @@ elif task_choice == "Stroop Task Data Analysis":
             )
         except Exception as e:
             st.error(f"❌ Error: {e}")
+
