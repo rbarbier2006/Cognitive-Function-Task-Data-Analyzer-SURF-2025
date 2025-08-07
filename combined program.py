@@ -24,21 +24,45 @@ if task_choice == "Visual Search Task Data Analysis":
             else:
                 raise ValueError("Unsupported file type")
 
-            df = df.iloc[:, [18, 19]]
-            df.columns = ['ResponseTime', 'Correct']
-            df_correct = df[df['Correct'] == 1]
+            # Extract needed columns
+            df.columns = [f"col_{i}" for i in range(len(df.columns))]
+            df = df[["col_3", "col_4", "col_5", "col_18", "col_19"]]  # D, E, F, S, T
+            df.columns = ['TargetPresence', 'ConditionType', 'SetSizeRaw', 'ResponseTime', 'Correct']
 
-            mean_rt = df_correct['ResponseTime'].mean()
-            std_rt = df_correct['ResponseTime'].std()
-            num_correct = len(df_correct)
-            percent_accuracy = (num_correct / 80) * 100
-
-            result_df = pd.DataFrame({
-                'Mean RT': [mean_rt],
-                'SD RT': [std_rt],
-                'Accurate Responses': [num_correct],
-                'Percent Accuracy': [percent_accuracy]
+            # Clean and group
+            df['SetSize'] = df['SetSizeRaw'].astype(str).str[:2]
+            df['ConditionLabel'] = df['ConditionType'].str.strip().str.lower().map({
+                'feature': 'Feature',
+                'conjunction': 'Conj'
             })
+            df['PresenceLabel'] = df['TargetPresence'].str.strip().str.lower().map({
+                'present': 'P',
+                'absent': 'A'
+            })
+
+            df = df.dropna(subset=['ConditionLabel', 'PresenceLabel', 'SetSize'])
+            df['Group'] = df['ConditionLabel'] + '_' + df['PresenceLabel'] + '_' + df['SetSize']
+            df['Correct'] = pd.to_numeric(df['Correct'], errors='coerce')
+            df['ResponseTime'] = pd.to_numeric(df['ResponseTime'], errors='coerce')
+
+            results = []
+            for group_name, group_df in df.groupby('Group'):
+                total = len(group_df)
+                correct_df = group_df[group_df['Correct'] == 1]
+                num_correct = len(correct_df)
+                percent_accuracy = (num_correct / total) * 100 if total else 0
+                mean_rt = correct_df['ResponseTime'].mean()
+                sd_rt = correct_df['ResponseTime'].std()
+
+                results.append({
+                    'Condition': group_name,
+                    'Mean RT': round(mean_rt, 2),
+                    'SD RT': round(sd_rt, 2),
+                    'Accurate Responses': num_correct,
+                    'Percent Accuracy': round(percent_accuracy, 2)
+                })
+
+            result_df = pd.DataFrame(results)
 
             st.success("✅ Analysis complete")
             st.dataframe(result_df)
@@ -49,9 +73,10 @@ if task_choice == "Visual Search Task Data Analysis":
             st.download_button(
                 label="Download Excel File",
                 data=output.getvalue(),
-                file_name='visual_search_results.xlsx',
+                file_name='visual_search_results_detailed.xlsx',
                 mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
+
         except Exception as e:
             st.error(f"❌ Error: {e}")
 
@@ -133,4 +158,3 @@ elif task_choice == "Stroop Task Data Analysis":
             )
         except Exception as e:
             st.error(f"❌ Error: {e}")
-
