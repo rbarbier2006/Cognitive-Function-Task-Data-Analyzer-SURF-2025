@@ -10,72 +10,103 @@ task_choice = st.selectbox("Choose a program:", [
     "Stroop Task Data Analysis"
 ])
 
+def process_visual_search_folder(folder_path):
+    all_data = []
+
+    for filename in os.listdir(folder_path):
+        if filename.endswith(".csv") or filename.endswith(".xlsx"):
+            try:
+                name_parts = os.path.splitext(filename)[0].split("_")
+                if len(name_parts) != 4:
+                    continue
+                participant = name_parts[0].replace("P", "")
+                condition = name_parts[2].upper()
+                time_raw = name_parts[3].upper()
+
+                if time_raw == "POST1":
+                    time = "POST15"
+                elif time_raw == "POST2":
+                    time = "POST30"
+                else:
+                    time = time_raw
+
+                file_path = os.path.join(folder_path, filename)
+
+                if filename.endswith(".csv"):
+                    df = pd.read_csv(file_path, skiprows=3)
+                else:
+                    df = pd.read_excel(file_path, skiprows=3)
+
+                selected = df.iloc[:, [3, 4, 5, 18, 19]]
+                selected.columns = ['TargetPresence', 'SearchType', 'SetSize', 'ResponseTime', 'Correct']
+                selected.insert(0, 'Time', time)
+                selected.insert(0, 'Condition', condition)
+                selected.insert(0, 'Participant', participant)
+                all_data.append(selected)
+            except Exception as e:
+                print(f"❌ Failed to process {filename}: {e}")
+
+    if all_data:
+        return pd.concat(all_data, ignore_index=True)
+    else:
+        return pd.DataFrame()
+
 if task_choice == "Visual Search Task Data Analysis":
     st.header("Visual Search Task")
-    uploaded_file = st.file_uploader("Upload your data file", type=["csv", "xlsx"])
+    folder_path = st.text_input("Enter folder path containing Visual Search files:")
 
-    if uploaded_file:
+    if folder_path and os.path.isdir(folder_path):
         try:
-            ext = os.path.splitext(uploaded_file.name)[1]
-            if ext == ".csv":
-                df = pd.read_csv(uploaded_file, skiprows=3)
-            elif ext == ".xlsx":
-                df = pd.read_excel(uploaded_file, skiprows=3)
+            df = process_visual_search_folder(folder_path)
+
+            if df.empty:
+                st.warning("No valid files found in the folder.")
             else:
-                raise ValueError("Unsupported file type")
-
-            # Extract needed columns
-            df.columns = [f"col_{i}" for i in range(len(df.columns))]
-            df = df[["col_3", "col_4", "col_5", "col_18", "col_19"]]  # D, E, F, S, T
-            df.columns = ['TargetPresence', 'ConditionType', 'SetSizeRaw', 'ResponseTime', 'Correct']
-
-            # Clean and group
-            df['SetSize'] = df['SetSizeRaw'].astype(str).str[:2]
-            df['ConditionLabel'] = df['ConditionType'].str.strip().str.lower().map({
-                'feature': 'Feature',
-                'conjunction': 'Conj'
-            })
-            df['PresenceLabel'] = df['TargetPresence'].str.strip().str.lower().map({
-                'present': 'P',
-                'absent': 'A'
-            })
-
-            df = df.dropna(subset=['ConditionLabel', 'PresenceLabel', 'SetSize'])
-            df['Group'] = df['ConditionLabel'] + '_' + df['PresenceLabel'] + '_' + df['SetSize']
-            df['Correct'] = pd.to_numeric(df['Correct'], errors='coerce')
-            df['ResponseTime'] = pd.to_numeric(df['ResponseTime'], errors='coerce')
-
-            results = []
-            for group_name, group_df in df.groupby('Group'):
-                total = len(group_df)
-                correct_df = group_df[group_df['Correct'] == 1]
-                num_correct = len(correct_df)
-                percent_accuracy = (num_correct / total) * 100 if total else 0
-                mean_rt = correct_df['ResponseTime'].mean()
-                sd_rt = correct_df['ResponseTime'].std()
-
-                results.append({
-                    'Condition': group_name,
-                    'Mean RT': round(mean_rt, 2),
-                    'SD RT': round(sd_rt, 2),
-                    'Accurate Responses': num_correct,
-                    'Percent Accuracy': round(percent_accuracy, 2)
+                df['SetSize'] = df['SetSize'].astype(str).str[:2]
+                df['ConditionLabel'] = df['SearchType'].str.strip().str.lower().map({
+                    'feature': 'Feature',
+                    'conjunction': 'Conj'
+                })
+                df['PresenceLabel'] = df['TargetPresence'].str.strip().str.lower().map({
+                    'present': 'P',
+                    'absent': 'A'
                 })
 
-            result_df = pd.DataFrame(results)
+                df = df.dropna(subset=['ConditionLabel', 'PresenceLabel', 'SetSize'])
+                df['Group'] = df['ConditionLabel'] + '_' + df['PresenceLabel'] + '_' + df['SetSize']
+                df['Correct'] = pd.to_numeric(df['Correct'], errors='coerce')
+                df['ResponseTime'] = pd.to_numeric(df['ResponseTime'], errors='coerce')
 
-            st.success("✅ Analysis complete")
-            st.dataframe(result_df)
+                results = []
+                for group_name, group_df in df.groupby('Group'):
+                    total = len(group_df)
+                    correct_df = group_df[group_df['Correct'] == 1]
+                    num_correct = len(correct_df)
+                    percent_accuracy = (num_correct / total) * 100 if total else 0
+                    mean_rt = correct_df['ResponseTime'].mean()
+                    sd_rt = correct_df['ResponseTime'].std()
 
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                result_df.to_excel(writer, index=False)
-            st.download_button(
-                label="Download Excel File",
-                data=output.getvalue(),
-                file_name='visual_search_results_detailed.xlsx',
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
+                    results.append({
+                        'Condition': group_name,
+                        'Mean RT': round(mean_rt, 2),
+                        'SD RT': round(sd_rt, 2),
+                        'Accurate Responses': num_correct,
+                        'Percent Accuracy': round(percent_accuracy, 2)
+                    })
+
+                result_df = pd.DataFrame(results)
+                st.success("✅ Analysis complete")
+                st.dataframe(result_df)
+
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    result_df.to_excel(writer, index=False)
+                st.download_button(
+                    label="Download Excel File",
+                    data=output.getvalue(),
+                    file_name='visual_search_results_detailed.xlsx',
+                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
 
         except Exception as e:
             st.error(f"❌ Error: {e}")
@@ -110,7 +141,6 @@ elif task_choice == "Stroop Task Data Analysis":
             combined_df['T'] = pd.to_numeric(combined_df['T'], errors='coerce')
             combined_df['U'] = pd.to_numeric(combined_df['U'], errors='coerce')
 
-            # Split into three groups
             congruent_df = combined_df[combined_df['Condition'].str.lower() == 'congruent'].copy()
             incongruent_df = combined_df[combined_df['Condition'].str.lower() == 'incongruent'].copy()
             doubly_incongruent_df = combined_df[combined_df['Condition'].str.lower() == 'doubly incongruent'].copy()
@@ -158,3 +188,4 @@ elif task_choice == "Stroop Task Data Analysis":
             )
         except Exception as e:
             st.error(f"❌ Error: {e}")
+
