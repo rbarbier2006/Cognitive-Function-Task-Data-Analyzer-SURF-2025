@@ -32,125 +32,180 @@ def map_time(raw):
     return raw
 
 # ===============================
-# Visual Search (multi-file)
+# Visual Search (multi-file or ZIP)
 # ===============================
 if task_choice == "Visual Search Task Data Analysis":
     st.header("Visual Search Task")
 
-    uploaded_files = st.file_uploader(
-        "Upload ALL Visual Search files (CSV/XLSX) at once",
-        type=["csv", "xlsx"],
-        accept_multiple_files=True
-    )
+    col1, col2 = st.columns(2)
+    with col1:
+        uploaded_files = st.file_uploader(
+            "Upload ALL Visual Search files (CSV/XLSX) at once",
+            type=["csv", "xlsx"],
+            accept_multiple_files=True
+        )
+    with col2:
+        zip_file = st.file_uploader(
+            "…or upload a ZIP containing folders/files",
+            type=["zip"]
+        )
 
+    def map_time(raw):
+        raw = str(raw).upper()
+        return "POST15" if raw == "POST1" else ("POST30" if raw == "POST2" else raw)
+
+    def parse_filename(name: str):
+        """
+        Expect: P#_VisualSearch_CONDITION_TIMEPOINT.ext
+        Works even if nested path like sub/dir/P8_VisualSearch_CRL_PRE.csv
+        """
+        base = os.path.splitext(os.path.basename(name))[0]
+        parts = base.split("_")
+        if len(parts) < 4:
+            return None  # unrecognized
+        participant = parts[0].replace("P", "").strip()
+        condition = parts[2].upper().strip()
+        time_label = map_time(parts[3])
+        return participant, condition, time_label
+
+    def clean_vs_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+        needed_idx = [3, 4, 5, 18, 19]  # D, E, F, S, T
+        if max(needed_idx) >= df.shape[1]:
+            return pd.DataFrame()
+        sub = df.iloc[:, needed_idx].copy()
+        sub.columns = ["TargetPresence", "SearchType", "SetSizeRaw", "ResponseTime", "Correct"]
+        return sub
+
+    all_rows = []
+
+    # A) Handle uploaded multiple files
     if uploaded_files:
-        try:
-            all_rows = []
+        for uf in uploaded_files:
+            meta = parse_filename(uf.name)
+            if not meta:
+                st.warning(f"Skipping unrecognized file name: {uf.name}")
+                continue
+            participant, condition, time_label = meta
 
-            for uf in uploaded_files:
-                # File name format: P#_VisualSearch_CONDITION_TIMEPOINT.ext
-                base = os.path.splitext(uf.name)[0]
-                parts = base.split("_")
-                # be tolerant of names like "P8 (5) CONTRAST - VS" -> skip, or adjust if needed
-                if len(parts) < 4:
-                    # Try a more tolerant parse: look for the first piece that starts with P, etc.
-                    # If it still doesn't match, skip gracefully
-                    st.warning(f"Skipping unrecognized file name: {uf.name}")
+            try:
+                ext = os.path.splitext(uf.name)[1].lower()
+                if ext == ".csv":
+                    df = pd.read_csv(uf, skiprows=3)
+                else:
+                    df = pd.read_excel(uf, skiprows=3, engine="openpyxl")
+                sub = clean_vs_dataframe(df)
+                if sub.empty:
+                    st.warning(f"{uf.name}: not enough columns; skipped.")
                     continue
-
-                participant = parts[0].replace("P", "").strip()
-                # parts[1] is "VisualSearch" ideally; ignore/casual check
-                condition = parts[2].upper().strip()
-                time_label = map_time(parts[3])
-
-                df = read_any(uf, skiprows=3)
-
-                # Select columns: D, E, F, S, T  -> by index: 3, 4, 5, 18, 19
-                # Guard in case sheet has fewer columns
-                needed_idx = [3, 4, 5, 18, 19]
-                if max(needed_idx) >= df.shape[1]:
-                    st.warning(f"{uf.name}: not enough columns after skiprows=3; skipping.")
-                    continue
-
-                sub = df.iloc[:, needed_idx].copy()
-                sub.columns = ["TargetPresence", "SearchType", "SetSizeRaw", "ResponseTime", "Correct"]
-
-                # Attach metadata from filename
                 sub.insert(0, "Participant", participant)
                 sub.insert(1, "Condition", condition)
                 sub.insert(2, "Time", time_label)
-
                 all_rows.append(sub)
+            except Exception as e:
+                st.error(f"{uf.name}: {e}")
 
-            if not all_rows:
-                st.warning("No valid files were processed.")
-                st.stop()
+    # B) Handle ZIP upload (with nested folders)
+    if zip_file is not None:
+        from zipfile import ZipFile
+        from io import BytesIO
+        try:
+            with ZipFile(zip_file) as zf:
+                for member in zf.namelist():
+                    # ignore directories
+                    if member.endswith("/"):
+                        continue
+                    # only csv/xlsx
+                    ext = os.path.splitext(member)[1].lower()
+                    if ext not in (".csv", ".xlsx"):
+                        continue
 
-            combined = pd.concat(all_rows, ignore_index=True)
+                    meta = parse_filename(member)
+                    if not meta:
+                        st.warning(f"Skipping unrecognized file name in ZIP: {member}")
+                        continue
+                    participant, condition, time_label = meta
 
-            # ---- Grouping logic: Feature/Conj, Present/Absent, SetSize (first 2 chars) ----
-            combined["SetSize"] = combined["SetSizeRaw"].astype(str).str[:2]
-            combined["ConditionLabel"] = (
-                combined["SearchType"].astype(str).str.strip().str.lower().map({
-                    "feature": "Feature",
-                    "conjunction": "Conj"
-                })
-            )
-            combined["PresenceLabel"] = (
-                combined["TargetPresence"].astype(str).str.strip().str.lower().map({
-                    "present": "P",
-                    "absent": "A"
-                })
-            )
+                    with zf.open(member) as f:
+                        if ext == ".csv":
+                            df = pd.read_csv(f, skiprows=3)
+                        else:
+                            # Zip members need a file-like object; openpyxl can read bytes
+                            df = pd.read_excel(BytesIO(f.read()), skiprows=3, engine="openpyxl")
 
-            # Clean numeric
-            combined["Correct"] = pd.to_numeric(combined["Correct"], errors="coerce")
-            combined["ResponseTime"] = pd.to_numeric(combined["ResponseTime"], errors="coerce")
-
-            # Drop rows missing grouping pieces
-            combined = combined.dropna(subset=["ConditionLabel", "PresenceLabel", "SetSize"])
-
-            # Final group key like Feature_P_04, Conj_A_32, etc.
-            combined["Group"] = combined["ConditionLabel"] + "_" + combined["PresenceLabel"] + "_" + combined["SetSize"]
-
-            # Compute stats per group
-            results = []
-            for group_name, g in combined.groupby("Group"):
-                total = len(g)
-                correct_g = g[g["Correct"] == 1]
-                num_correct = len(correct_g)
-                pct_acc = (num_correct / total * 100) if total else 0.0
-                mean_rt = correct_g["ResponseTime"].mean()
-                sd_rt = correct_g["ResponseTime"].std()
-
-                results.append({
-                    "Condition": group_name,
-                    "Mean RT": round(mean_rt, 2) if pd.notna(mean_rt) else None,
-                    "SD RT": round(sd_rt, 2) if pd.notna(sd_rt) else None,
-                    "Accurate Responses": int(num_correct),
-                    "Percent Accuracy": round(pct_acc, 2)
-                })
-
-            result_df = pd.DataFrame(results).sort_values("Condition", ignore_index=True)
-
-            st.success("✅ Analysis complete")
-            st.dataframe(result_df)
-
-            # Export: summary + raw combined (optional)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                result_df.to_excel(writer, index=False, sheet_name="Summary")
-                combined.to_excel(writer, index=False, sheet_name="Combined Raw")
-
-            st.download_button(
-                label="Download Excel (Summary + Raw)",
-                data=output.getvalue(),
-                file_name="visual_search_batch_results.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
+                    sub = clean_vs_dataframe(df)
+                    if sub.empty:
+                        st.warning(f"{member}: not enough columns; skipped.")
+                        continue
+                    sub.insert(0, "Participant", participant)
+                    sub.insert(1, "Condition", condition)
+                    sub.insert(2, "Time", time_label)
+                    all_rows.append(sub)
         except Exception as e:
-            st.error(f"❌ Error: {e}")
+            st.error(f"ZIP error: {e}")
+
+    # Continue only if we gathered rows
+    if all_rows:
+        combined = pd.concat(all_rows, ignore_index=True)
+
+        # Build groups
+        combined["SetSize"] = combined["SetSizeRaw"].astype(str).str[:2]
+        combined["ConditionLabel"] = (
+            combined["SearchType"].astype(str).str.strip().str.lower().map({
+                "feature": "Feature",
+                "conjunction": "Conj"
+            })
+        )
+        combined["PresenceLabel"] = (
+            combined["TargetPresence"].astype(str).str.strip().str.lower().map({
+                "present": "P",
+                "absent": "A"
+            })
+        )
+
+        combined["Correct"] = pd.to_numeric(combined["Correct"], errors="coerce")
+        combined["ResponseTime"] = pd.to_numeric(combined["ResponseTime"], errors="coerce")
+
+        combined = combined.dropna(subset=["ConditionLabel", "PresenceLabel", "SetSize"])
+        combined["Group"] = combined["ConditionLabel"] + "_" + combined["PresenceLabel"] + "_" + combined["SetSize"]
+
+        # Stats
+        results = []
+        for group_name, g in combined.groupby("Group"):
+            total = len(g)
+            correct_g = g[g["Correct"] == 1]
+            num_correct = len(correct_g)
+            pct_acc = (num_correct / total * 100) if total else 0.0
+            mean_rt = correct_g["ResponseTime"].mean()
+            sd_rt = correct_g["ResponseTime"].std()
+
+            results.append({
+                "Condition": group_name,
+                "Mean RT": round(mean_rt, 2) if pd.notna(mean_rt) else None,
+                "SD RT": round(sd_rt, 2) if pd.notna(sd_rt) else None,
+                "Accurate Responses": int(num_correct),
+                "Percent Accuracy": round(pct_acc, 2)
+            })
+
+        result_df = pd.DataFrame(results).sort_values("Condition", ignore_index=True)
+
+        st.success("✅ Analysis complete")
+        st.dataframe(result_df)
+
+        # Download
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            result_df.to_excel(writer, index=False, sheet_name="Summary")
+            combined.to_excel(writer, index=False, sheet_name="Combined Raw")
+
+        st.download_button(
+            label="Download Excel (Summary + Raw)",
+            data=output.getvalue(),
+            file_name="visual_search_batch_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.info("Upload multiple .csv/.xlsx files OR a ZIP containing them (subfolders allowed).")
+
 
 # ===============================
 # Stroop (unchanged – two files)
@@ -227,6 +282,7 @@ elif task_choice == "Stroop Task Data Analysis":
 
         except Exception as e:
             st.error(f"❌ Error: {e}")
+
 
 
 
