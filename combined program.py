@@ -56,7 +56,7 @@ if task_choice == "Visual Search Task Data Analysis":
         if len(parts) < 4:
             return None
         participant = parts[0].replace("P", "").strip()
-        # parts[1] is usually 'VisualSearch' - we ignore it
+        # parts[1] is 'VisualSearch' (ignored)
         condition = parts[2].upper().strip()
         time_label = map_time(parts[3])
         return participant, condition, time_label
@@ -152,8 +152,7 @@ if task_choice == "Visual Search Task Data Analysis":
         combined["ResponseTime"] = pd.to_numeric(combined["ResponseTime"], errors="coerce")
         combined = combined.dropna(subset=["ConditionLabel", "PresenceLabel", "SetSize"])
 
-        # NEW: Group label you wanted
-        # P<participant>_<Condition>_<Time>_<Feature/Conj>_<P/A>_<SetSize>
+        # Group = P<Participant>_<Condition>_<Time>_<Feature/Conj>_<P/A>_<SetSize>
         combined["Group"] = (
             "P" + combined["Participant"].astype(str) + "_" +
             combined["Condition"].astype(str) + "_" +
@@ -180,10 +179,35 @@ if task_choice == "Visual Search Task Data Analysis":
         stats_df["Mean RT"] = stats_df["Mean RT"].round(2)
         stats_df["SD RT"] = stats_df["SD RT"].round(2)
 
-        # ---------- Summary shown in the app ----------
-        result_df = stats_df.reset_index().rename(columns={"Group": "Condition"})
+        # ---------- Build the Summary with meta columns ----------
+        meta_df = (
+            combined.groupby("Group")
+            .agg(
+                Participant=("Participant", "first"),
+                Condition=("Condition", "first"),
+                Time=("Time", "first"),
+                ConditionType=("ConditionLabel", "first"),   # Feature/Conj
+                TargetPresence=("PresenceLabel", "first"),   # P/A
+                SetSize=("SetSize", "first")
+            )
+        )
+        summary_df = meta_df.join(
+            stats_df[["Accurate Responses", "Mean RT", "SD RT", "Percent Accuracy"]]
+        )
+        # rename index -> Name (the group string)
+        summary_df = summary_df.reset_index().rename(columns={"Group": "Name"})
+        # order columns
+        summary_cols = [
+            "Participant", "Condition", "Time",
+            "ConditionType", "TargetPresence", "SetSize",
+            "Name", "Accurate Responses", "Mean RT", "SD RT", "Percent Accuracy"
+        ]
+        summary_df = summary_df[summary_cols].sort_values(
+            ["Participant", "Condition", "Time", "ConditionType", "TargetPresence", "SetSize"]
+        ).reset_index(drop=True)
+
         st.success("✅ Analysis complete")
-        st.dataframe(result_df.sort_values("Condition", ignore_index=True))
+        st.dataframe(summary_df)
 
         # ---------- Attach stats to EVERY raw row (rightmost) ----------
         combined["Mean RT"] = combined["Group"].map(stats_df["Mean RT"])
@@ -198,7 +222,7 @@ if task_choice == "Visual Search Task Data Analysis":
         # ---------- Export ----------
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            result_df.to_excel(writer, index=False, sheet_name="Summary")
+            summary_df.to_excel(writer, index=False, sheet_name="Summary")
             combined.to_excel(writer, index=False, sheet_name="Combined Raw")
 
         st.download_button(
