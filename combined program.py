@@ -11,9 +11,8 @@ task_choice = st.selectbox(
 )
 
 # -------------------------------
-# Helpers
+# Common helpers
 # -------------------------------
-
 def read_any(file, skiprows=3):
     ext = os.path.splitext(file.name)[1].lower()
     if ext == ".csv":
@@ -45,14 +44,7 @@ if task_choice == "Visual Search Task Data Analysis":
             accept_multiple_files=True
         )
     with col2:
-        zip_file = st.file_uploader(
-            "…or upload a ZIP containing folders/files",
-            type=["zip"]
-        )
-
-    def map_time(raw):
-        raw = str(raw).upper()
-        return "POST15" if raw == "POST1" else ("POST30" if raw == "POST2" else raw)
+        zip_file = st.file_uploader("…or upload a ZIP containing folders/files", type=["zip"])
 
     def parse_filename(name: str):
         """
@@ -62,14 +54,16 @@ if task_choice == "Visual Search Task Data Analysis":
         base = os.path.splitext(os.path.basename(name))[0]
         parts = base.split("_")
         if len(parts) < 4:
-            return None  # unrecognized
+            return None
         participant = parts[0].replace("P", "").strip()
+        # parts[1] is usually 'VisualSearch' - we ignore it
         condition = parts[2].upper().strip()
         time_label = map_time(parts[3])
         return participant, condition, time_label
 
     def clean_vs_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-        needed_idx = [3, 4, 5, 18, 19]  # D, E, F, S, T
+        # D, E, F, S, T => 3, 4, 5, 18, 19
+        needed_idx = [3, 4, 5, 18, 19]
         if max(needed_idx) >= df.shape[1]:
             return pd.DataFrame()
         sub = df.iloc[:, needed_idx].copy()
@@ -78,7 +72,7 @@ if task_choice == "Visual Search Task Data Analysis":
 
     all_rows = []
 
-    # A) Handle uploaded multiple files
+    # A) handle multiple loose files
     if uploaded_files:
         for uf in uploaded_files:
             meta = parse_filename(uf.name)
@@ -86,13 +80,8 @@ if task_choice == "Visual Search Task Data Analysis":
                 st.warning(f"Skipping unrecognized file name: {uf.name}")
                 continue
             participant, condition, time_label = meta
-
             try:
-                ext = os.path.splitext(uf.name)[1].lower()
-                if ext == ".csv":
-                    df = pd.read_csv(uf, skiprows=3)
-                else:
-                    df = pd.read_excel(uf, skiprows=3, engine="openpyxl")
+                df = read_any(uf, skiprows=3)
                 sub = clean_vs_dataframe(df)
                 if sub.empty:
                     st.warning(f"{uf.name}: not enough columns; skipped.")
@@ -104,21 +93,18 @@ if task_choice == "Visual Search Task Data Analysis":
             except Exception as e:
                 st.error(f"{uf.name}: {e}")
 
-    # B) Handle ZIP upload (with nested folders)
+    # B) handle ZIP (nested folders OK)
     if zip_file is not None:
         from zipfile import ZipFile
         from io import BytesIO
         try:
             with ZipFile(zip_file) as zf:
                 for member in zf.namelist():
-                    # ignore directories
                     if member.endswith("/"):
                         continue
-                    # only csv/xlsx
                     ext = os.path.splitext(member)[1].lower()
                     if ext not in (".csv", ".xlsx"):
                         continue
-
                     meta = parse_filename(member)
                     if not meta:
                         st.warning(f"Skipping unrecognized file name in ZIP: {member}")
@@ -129,7 +115,6 @@ if task_choice == "Visual Search Task Data Analysis":
                         if ext == ".csv":
                             df = pd.read_csv(f, skiprows=3)
                         else:
-                            # Zip members need a file-like object; openpyxl can read bytes
                             df = pd.read_excel(BytesIO(f.read()), skiprows=3, engine="openpyxl")
 
                     sub = clean_vs_dataframe(df)
@@ -147,7 +132,7 @@ if task_choice == "Visual Search Task Data Analysis":
     if all_rows:
         combined = pd.concat(all_rows, ignore_index=True)
 
-        # Build groups
+        # Build grouping pieces
         combined["SetSize"] = combined["SetSizeRaw"].astype(str).str[:2]
         combined["ConditionLabel"] = (
             combined["SearchType"].astype(str).str.strip().str.lower().map({
@@ -162,36 +147,55 @@ if task_choice == "Visual Search Task Data Analysis":
             })
         )
 
+        # Numeric + drop rows missing key inputs
         combined["Correct"] = pd.to_numeric(combined["Correct"], errors="coerce")
         combined["ResponseTime"] = pd.to_numeric(combined["ResponseTime"], errors="coerce")
-
         combined = combined.dropna(subset=["ConditionLabel", "PresenceLabel", "SetSize"])
-        combined["Group"] = combined["ConditionLabel"] + "_" + combined["PresenceLabel"] + "_" + combined["SetSize"]
 
-        # Stats
-        results = []
-        for group_name, g in combined.groupby("Group"):
-            total = len(g)
-            correct_g = g[g["Correct"] == 1]
-            num_correct = len(correct_g)
-            pct_acc = (num_correct / total * 100) if total else 0.0
-            mean_rt = correct_g["ResponseTime"].mean()
-            sd_rt = correct_g["ResponseTime"].std()
+        # NEW: Group label you wanted
+        # P<participant>_<Condition>_<Time>_<Feature/Conj>_<P/A>_<SetSize>
+        combined["Group"] = (
+            "P" + combined["Participant"].astype(str) + "_" +
+            combined["Condition"].astype(str) + "_" +
+            combined["Time"].astype(str) + "_" +
+            combined["ConditionLabel"] + "_" +
+            combined["PresenceLabel"] + "_" +
+            combined["SetSize"]
+        )
 
-            results.append({
-                "Condition": group_name,
-                "Mean RT": round(mean_rt, 2) if pd.notna(mean_rt) else None,
-                "SD RT": round(sd_rt, 2) if pd.notna(sd_rt) else None,
-                "Accurate Responses": int(num_correct),
-                "Percent Accuracy": round(pct_acc, 2)
-            })
+        # ---------- Compute per-group stats ----------
+        group_totals = combined.groupby("Group")["Correct"].size()
+        correct_mask = combined["Correct"] == 1
+        correct_counts = combined[correct_mask].groupby("Group")["Correct"].size()
+        mean_rt = combined[correct_mask].groupby("Group")["ResponseTime"].mean()
+        sd_rt = combined[correct_mask].groupby("Group")["ResponseTime"].std()
 
-        result_df = pd.DataFrame(results).sort_values("Condition", ignore_index=True)
+        stats_df = pd.DataFrame({
+            "Accurate Responses": correct_counts,
+            "Mean RT": mean_rt,
+            "SD RT": sd_rt
+        })
+        stats_df = stats_df.reindex(group_totals.index, fill_value=0)
+        stats_df["Percent Accuracy"] = (stats_df["Accurate Responses"] / group_totals * 100).round(2)
+        stats_df["Mean RT"] = stats_df["Mean RT"].round(2)
+        stats_df["SD RT"] = stats_df["SD RT"].round(2)
 
+        # ---------- Summary shown in the app ----------
+        result_df = stats_df.reset_index().rename(columns={"Group": "Condition"})
         st.success("✅ Analysis complete")
-        st.dataframe(result_df)
+        st.dataframe(result_df.sort_values("Condition", ignore_index=True))
 
-        # Download
+        # ---------- Attach stats to EVERY raw row (rightmost) ----------
+        combined["Mean RT"] = combined["Group"].map(stats_df["Mean RT"])
+        combined["SD RT"] = combined["Group"].map(stats_df["SD RT"])
+        combined["Accurate Responses"] = combined["Group"].map(stats_df["Accurate Responses"])
+        combined["Percent Accuracy"] = combined["Group"].map(stats_df["Percent Accuracy"])
+
+        # Move stat columns to the far right
+        stat_cols = ["Mean RT", "SD RT", "Accurate Responses", "Percent Accuracy"]
+        combined = combined[[c for c in combined.columns if c not in stat_cols] + stat_cols]
+
+        # ---------- Export ----------
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             result_df.to_excel(writer, index=False, sheet_name="Summary")
@@ -206,9 +210,8 @@ if task_choice == "Visual Search Task Data Analysis":
     else:
         st.info("Upload multiple .csv/.xlsx files OR a ZIP containing them (subfolders allowed).")
 
-
 # ===============================
-# Stroop (unchanged – two files)
+# Stroop (unchanged: two files)
 # ===============================
 elif task_choice == "Stroop Task Data Analysis":
     st.header("Stroop Task Analyzer")
@@ -219,7 +222,7 @@ elif task_choice == "Stroop Task Data Analysis":
     if uploaded_file1 and uploaded_file2:
         try:
             def clean_file(file):
-                df = read_any(file, skiprows=3)   # you were on skiprows=3 after your fix
+                df = read_any(file, skiprows=3)
                 df = df.iloc[:, [2, 18, 19, 20]].copy()
                 df.columns = ["Condition", "S", "T", "U"]
                 return df
@@ -228,32 +231,26 @@ elif task_choice == "Stroop Task Data Analysis":
             df2 = clean_file(uploaded_file2)
             combined_df = pd.concat([df1, df2], ignore_index=True)
 
-            # Remove timeouts
             combined_df = combined_df[combined_df["S"].astype(str).str.lower() != "timeout"]
-
-            # Types
             combined_df["Condition"] = combined_df["Condition"].astype(str)
             combined_df["S"] = combined_df["S"].astype(str)
             combined_df["T"] = pd.to_numeric(combined_df["T"], errors="coerce")
             combined_df["U"] = pd.to_numeric(combined_df["U"], errors="coerce")
 
-            # Split into three
             groups = [
                 ("Congruent", combined_df[combined_df["Condition"].str.lower() == "congruent"].copy()),
                 ("Incongruent", combined_df[combined_df["Condition"].str.lower() == "incongruent"].copy()),
                 ("Doubly Incongruent", combined_df[combined_df["Condition"].str.lower() == "doubly incongruent"].copy())
             ]
-            for name, g in groups:
-                g["Group"] = name
 
             results = []
             for group_name, group_df in groups:
                 total = len(group_df)
-                group_correct_df = group_df[group_df["U"] == 1]
-                num_correct = len(group_correct_df)
+                correct_df = group_df[group_df["U"] == 1]
+                num_correct = len(correct_df)
                 pct_acc = (num_correct / total * 100) if total else 0.0
-                mean_rt = group_correct_df["T"].mean()
-                sd_rt = group_correct_df["T"].std()
+                mean_rt = correct_df["T"].mean()
+                sd_rt = correct_df["T"].std()
 
                 results.append({
                     "Condition": group_name,
@@ -282,6 +279,8 @@ elif task_choice == "Stroop Task Data Analysis":
 
         except Exception as e:
             st.error(f"❌ Error: {e}")
+
+
 
 
 
