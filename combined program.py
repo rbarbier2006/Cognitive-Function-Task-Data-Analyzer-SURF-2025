@@ -240,7 +240,7 @@ if task_choice == "Visual Search Task Data Analysis":
         st.info("Upload multiple .csv/.xlsx files OR a ZIP containing them (subfolders allowed).")
 
 # ===============================
-# Stroop (multi-file/ZIP with .1/.2 pairing)
+# Stroop (multi-file/ZIP with .1/.2 pairing) — Participant minus 3
 # ===============================
 elif task_choice == "Stroop Task Data Analysis":
     st.header("Stroop Task Analyzer")
@@ -259,6 +259,7 @@ elif task_choice == "Stroop Task Data Analysis":
         """
         Expect: P#_Stroop_CONDITION_TIMEPOINT[.1|.2].ext
         Returns (participant, condition_meta, time)
+        NOTE: Participant is reduced by 3 (e.g., P10 -> 7).
         """
         base = os.path.splitext(os.path.basename(name))[0]
         m = re.match(r"^(.*)\.(1|2)$", base)  # strip .1/.2 if present
@@ -267,7 +268,12 @@ elif task_choice == "Stroop Task Data Analysis":
         parts = base.split("_")
         if len(parts) < 4:
             return None
-        participant = parts[0].replace("P", "").strip()
+        participant_raw = parts[0].replace("P", "").strip()
+        # subtract 3 from participant
+        try:
+            participant = str(int(participant_raw) - 3)
+        except:
+            participant = participant_raw  # fallback unchanged if not numeric
         condition_meta = parts[2].upper().strip()
         time_label = map_time(parts[3])
         return participant, condition_meta, time_label
@@ -340,7 +346,7 @@ elif task_choice == "Stroop Task Data Analysis":
         # We expect twins (.1 and .2). If not exactly 2, warn but still process what exists.
         if len(items) != 2:
             warnings.append(f"Pair '{key}' has {len(items)} file(s); expected 2 (.1 and .2). Processing available files.")
-        # parse meta from the key (works without .1/.2)
+        # parse meta from the first item (works without .1/.2)
         meta = parse_stroop_meta(items[0][0])
         if not meta:
             warnings.append(f"Skipping (unrecognized name): {items[0][0]}")
@@ -371,7 +377,7 @@ elif task_choice == "Stroop Task Data Analysis":
         sub["T"] = pd.to_numeric(sub["T"], errors="coerce")
         sub["U"] = pd.to_numeric(sub["U"], errors="coerce")
 
-        # Attach meta
+        # Attach meta (participant already adjusted)
         sub.insert(0, "Participant", participant)
         sub.insert(1, "Condition", condition_meta)
         sub.insert(2, "Time", time_label)
@@ -389,7 +395,6 @@ elif task_choice == "Stroop Task Data Analysis":
     combined = pd.concat(all_rows, ignore_index=True)
 
     # Build Name: P#_Condition_Time_StimCondition
-    # Also normalize StimCondition names for display
     def norm_stim(x):
         x = str(x).lower()
         if x == "congruent":
@@ -480,7 +485,6 @@ elif task_choice == "Stroop Task Data Analysis":
         file_name="stroop_batch_results.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
 
 
 
